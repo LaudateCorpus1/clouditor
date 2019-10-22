@@ -2,21 +2,18 @@ package main
 
 import (
 	"clouditor"
+	aws2 "clouditor/accounts/aws"
 	"clouditor/discovery"
-	"context"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/lambda"
-	"github.com/dgraph-io/dgo/v2"
-	"github.com/dgraph-io/dgo/v2/protos/api"
 	"github.com/fatih/structs"
-	"google.golang.org/grpc"
 )
 
 var wg sync.WaitGroup
@@ -24,27 +21,23 @@ var wg sync.WaitGroup
 var ch1 = make(chan clouditor.Event)
 var ch2 = make(chan clouditor.Event)
 
+var db clouditor.Database
+
 func main() {
 	fmt.Printf("Hello!\n")
 
-	conn, err := grpc.Dial("localhost:9080", grpc.WithInsecure())
-	if err != nil {
-		log.Fatal(err)
+	db = &clouditor.LegacyDatabase{}
+	if err := db.Connect(); err != nil {
+		fmt.Printf("Error connecting to database: %s", err)
+		return
 	}
-	defer conn.Close()
-	dgraphClient := dgo.NewDgraphClient(api.NewDgraphClient(conn))
 
-	txn := dgraphClient.NewTxn()
-	defer txn.Discard(context.Background())
-
-	q := `query all($a: string) {
-		all(func:allofterms(name, $a)) {
-		  name
-		}
-	  }`
-
-	res, err := txn.QueryWithVars(context.Background(), q, map[string]string{"$a": "Star Wars"})
-	fmt.Printf("%s\n", res.Json)
+	account := aws2.Account{}
+	if err := db.GetAccountById("AWS", &account); err == nil {
+		fmt.Printf("Account: %+v", account)
+	} else {
+		fmt.Printf("Error: %+v", err)
+	}
 
 	bus := clouditor.NewEventBus()
 
@@ -65,10 +58,11 @@ func main() {
 
 func LambdaScanner(bus *clouditor.EventBus) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
+		SharedConfigState: session.SharedConfigDisable,
+		SharedConfigFiles: []string{},
 	}))
 
-	svc := lambda.New(sess, &aws.Config{Region: aws.String("eu-central-1")})
+	svc := lambda.New(sess, &aws.Config{Credentials: credentials.NewCredentials(aws2.NewDatabaseCredentialsProvider(db)), Region: aws.String("eu-central-1")})
 
 	for {
 		result, err := svc.ListFunctions(nil)
