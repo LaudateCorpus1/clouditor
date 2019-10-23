@@ -2,18 +2,17 @@ package main
 
 import (
 	"clouditor"
-	aws2 "clouditor/accounts/aws"
 	"clouditor/discovery"
+	aws3 "clouditor/discovery/aws"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2017-09-01/network"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/lambda"
 	"github.com/fatih/structs"
+
+	"github.com/Azure/go-autorest/autorest/azure/auth"
 )
 
 var wg sync.WaitGroup
@@ -32,7 +31,7 @@ func main() {
 		return
 	}
 
-	account := aws2.Account{}
+	account := aws3.Account{}
 	if err := db.GetAccountById("AWS", &account); err == nil {
 		fmt.Printf("Account: %+v", account)
 	} else {
@@ -44,7 +43,8 @@ func main() {
 	bus.Subscribe("discovered", ch1)
 	bus.Subscribe("updated", ch2)
 
-	go LambdaScanner(bus)
+	go DoScan(bus)
+	go AzureStuff()
 
 	for {
 		select {
@@ -56,24 +56,27 @@ func main() {
 	}
 }
 
-func LambdaScanner(bus *clouditor.EventBus) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigDisable,
-		SharedConfigFiles: []string{},
-	}))
+func AzureStuff() {
+	// create a VirtualNetworks client
+	vnetClient := network.NewVirtualNetworksClient("<subscriptionID>")
 
-	svc := lambda.New(sess, &aws.Config{Credentials: credentials.NewCredentials(aws2.NewDatabaseCredentialsProvider(db)), Region: aws.String("eu-central-1")})
+	// create an authorizer from env vars or Azure Managed Service Idenity
+	authorizer, err := auth.NewAuthorizerFromEnvironment()
+	if err == nil {
+		vnetClient.Authorizer = authorizer
+	}
+}
+
+func DoScan(bus *clouditor.EventBus) {
+	scanner := aws3.LambdaScanner{}
+	scanner.Init(db)
 
 	for {
-		result, err := svc.ListFunctions(nil)
-		if err != nil {
-			fmt.Println("Cannot list functions")
-			os.Exit(0)
-		}
+		functions, _ := scanner.List()
 
-		for _, f := range result.Functions {
-			f2 := MyFunctionConfiguration(*f)
-			bus.Publish("discovered", discovery.Asset{Name: f2.GetName(), Description: aws.StringValue(f.Description)})
+		for _, f := range functions {
+			f2 := aws3.LambdaFunction(*f)
+			bus.Publish("discovered", discovery.Asset{Name: f2.Name(), Description: aws.StringValue(f.Description)})
 
 			s := structs.New(f2)
 
@@ -88,18 +91,4 @@ func LambdaScanner(bus *clouditor.EventBus) {
 
 		time.Sleep(5 * time.Minute)
 	}
-}
-
-type MyFunctionConfiguration lambda.FunctionConfiguration
-
-func (f *MyFunctionConfiguration) GetName() string {
-	return aws.StringValue(f.FunctionName)
-}
-
-func (f *MyFunctionConfiguration) GetID() string {
-	return aws.StringValue(f.FunctionArn)
-}
-
-func (f *MyFunctionConfiguration) GetType() string {
-	return "Serverless"
 }

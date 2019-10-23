@@ -6,7 +6,14 @@ type Asset struct {
 	Description string
 }
 
-type Named interface {
-	GetName() string
-	GetID() string
+type DiscoveryResult struct {
+}
+
+type Discoverable interface {
+	Name() string
+	ID() string
+}
+
+type Scanner interface {
+	Scan() DiscoveryResult
 }

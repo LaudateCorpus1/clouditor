@@ -1,7 +1,7 @@
-package accounts
+package clouditor
 
-// Account is anything which contains credentials to connect to a particular Cloud or Cluster
-type Account interface {
+// ServiceAccount is anything which contains credentials to connect to a particular Cloud or Cluster
+type ServiceAccount interface {
 	AccountID() string
 	User() string
 	IsAutoDiscovered() bool

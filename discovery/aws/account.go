@@ -2,15 +2,14 @@ package aws
 
 import (
 	"clouditor"
-	"clouditor/accounts"
 
 	"github.com/aws/aws-sdk-go/aws/credentials"
 )
 
 type Account struct {
-	accounts.BaseAccount `bson:",inline"`
-	AccessKeyID          string `bson:"accessKeyId"`
-	SecretAccessKey      string `bson:"secretAccessKey"`
+	clouditor.BaseAccount `bson:",inline"`
+	AccessKeyID           string `bson:"accessKeyId"`
+	SecretAccessKey       string `bson:"secretAccessKey"`
 }
 
 func (a *Account) AccountID() string {
@@ -34,12 +33,16 @@ func (a *Account) ResolveCredentials() credentials.Value {
 }
 
 type DatabaseCredentialsProvider struct {
-	db        clouditor.Database
-	retrieved bool
+	db          clouditor.Database
+	credentials *credentials.Credentials
+	retrieved   bool
 }
 
 func NewDatabaseCredentialsProvider(db clouditor.Database) *DatabaseCredentialsProvider {
-	return &DatabaseCredentialsProvider{db, false}
+	return &DatabaseCredentialsProvider{db, credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+	}), false}
 }
 
 func (p *DatabaseCredentialsProvider) Retrieve() (credentials.Value, error) {
@@ -48,18 +51,26 @@ func (p *DatabaseCredentialsProvider) Retrieve() (credentials.Value, error) {
 		return credentials.Value{}, err
 	}
 
+	// forward request to regular credential chain
 	if account.IsAutoDiscovered() {
-		var creds = credentials.NewChainCredentials([]credentials.Provider{
-			&credentials.EnvProvider{},
-			&credentials.SharedCredentialsProvider{},
-		})
-
-		return creds.Get()
+		return p.credentials.Get()
 	}
+
+	p.retrieved = true
 
 	return account.ResolveCredentials(), nil
 }
 
 func (p *DatabaseCredentialsProvider) IsExpired() bool {
+	var account Account
+	if err := p.db.GetAccountById("AWS", &account); err != nil {
+		return true
+	}
+
+	// forward request to regular credential chain
+	if account.IsAutoDiscovered() {
+		return p.credentials.IsExpired()
+	}
+
 	return !p.retrieved
 }

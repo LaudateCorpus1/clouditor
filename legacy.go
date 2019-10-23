@@ -1,7 +1,6 @@
 package clouditor
 
 import (
-	"clouditor/accounts"
 	"context"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -28,7 +27,7 @@ func (db *LegacyDatabase) Connect() (err error) {
 	return
 }
 
-func (db *LegacyDatabase) GetAccountById(id string, account accounts.Account) (err error) {
+func (db *LegacyDatabase) GetAccountById(id string, account ServiceAccount) (err error) {
 	collection := db.database.Collection("accounts")
 
 	return collection.FindOne(context.Background(), bson.M{"_id": id}).Decode(account)
